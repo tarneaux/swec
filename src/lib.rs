@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::{collections::VecDeque, fmt::Display};
 
 /// A service that is being watched by a checker.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -18,16 +18,32 @@ impl Service {
     }
 }
 
+impl Display for Service {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Service with spec {:?} and statuses {:?}",
+            self.spec, self.statuses
+        )
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TimedStatus {
     pub time: DateTime<Utc>,
     pub inner: Status,
 }
 
+impl Display for TimedStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Status at {}: {}", self.time, self.inner)
+    }
+}
+
 /// The status of a `Service`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Status {
-    Up(u32),         // Latency
+    Up(u32),         // Latency, ms
     Down(String),    // Reason
     Unknown(String), // Reason
 }
@@ -52,6 +68,16 @@ impl Status {
     }
 }
 
+impl Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Up(l) => write!(f, "Up, latency {l}ms"),
+            Self::Down(r) => write!(f, "Down: {r}"),
+            Self::Unknown(r) => write!(f, "Unknown: {r}"),
+        }
+    }
+}
+
 /// Human-readable information about a `Service`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServiceSpec {
@@ -61,4 +87,14 @@ pub struct ServiceSpec {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Message {
     CreateService(String, ServiceSpec),
+}
+
+impl Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CreateService(name, spec) => {
+                write!(f, "Create service '{name}' with spec: {spec:?}")
+            }
+        }
+    }
 }
