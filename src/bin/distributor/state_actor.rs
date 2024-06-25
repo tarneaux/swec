@@ -57,32 +57,38 @@ impl StateActorHandle {
         }
     }
 
-    pub async fn create_watcher(
-        &self,
-        name: String,
-        spec: ServiceSpec,
-    ) -> Result<(), StateActorError> {
+    pub fn subscribe(&self) -> broadcast::Receiver<Message> {
+        self.broadcast_sender.subscribe()
+    }
+
+    async fn query(&self, msg: Message) -> Result<(), StateActorError> {
         let (send, recv) = oneshot::channel();
-        let inner = Message::CreateService(name, spec);
-        let msg = StateActorMessage {
-            inner: inner.clone(),
+
+        let encapsulated_msg = StateActorMessage {
+            inner: msg.clone(),
             respond_to: send,
         };
 
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the
         // same failure twice.
-        let _ = self.mpsc_sender.send(msg);
+        let _ = self.mpsc_sender.send(encapsulated_msg);
         let resp = recv.await.expect("Actor task has been killed");
+
         if resp.is_ok() {
             // If this fails, there just aren't any subscribers to send messages to.
-            let _ = self.broadcast_sender.send(inner);
+            let _ = self.broadcast_sender.send(msg);
         }
+
         return resp;
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<Message> {
-        self.broadcast_sender.subscribe()
+    pub async fn create_watcher(
+        &self,
+        name: String,
+        spec: ServiceSpec,
+    ) -> Result<(), StateActorError> {
+        self.query(Message::CreateService(name, spec)).await
     }
 }
 
