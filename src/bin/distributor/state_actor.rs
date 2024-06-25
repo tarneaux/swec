@@ -4,13 +4,13 @@ use swec::{Message, Service, ServiceSpec};
 use tokio::sync::{mpsc, oneshot};
 
 struct StateActor {
-    receiver: mpsc::Receiver<StateActorMessage>,
+    receiver: mpsc::UnboundedReceiver<StateActorMessage>,
     services: BTreeMap<String, Service>,
 }
 
 impl StateActor {
     fn new(
-        receiver: mpsc::Receiver<StateActorMessage>,
+        receiver: mpsc::UnboundedReceiver<StateActorMessage>,
         services: BTreeMap<String, Service>,
     ) -> Self {
         Self { receiver, services }
@@ -39,12 +39,12 @@ impl StateActor {
 
 #[derive(Clone)]
 pub struct StateActorHandle {
-    sender: mpsc::Sender<StateActorMessage>,
+    sender: mpsc::UnboundedSender<StateActorMessage>,
 }
 
 impl StateActorHandle {
     pub fn new(services: BTreeMap<String, Service>) -> Self {
-        let (sender, receiver) = mpsc::channel(8);
+        let (sender, receiver) = mpsc::unbounded_channel();
         let mut actor = StateActor::new(receiver, services);
         tokio::spawn(async move { actor.run().await });
 
@@ -65,7 +65,7 @@ impl StateActorHandle {
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the
         // same failure twice.
-        let _ = self.sender.send(msg).await;
+        let _ = self.sender.send(msg);
         recv.await.expect("Actor task has been killed")
     }
 }
