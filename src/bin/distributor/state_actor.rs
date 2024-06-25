@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display};
 use swec::{Message, Service, ServiceSpec};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 struct StateActor {
     receiver: mpsc::UnboundedReceiver<StateActorMessage>,
@@ -39,16 +39,22 @@ impl StateActor {
 
 #[derive(Clone)]
 pub struct StateActorHandle {
-    sender: mpsc::UnboundedSender<StateActorMessage>,
+    mpsc_sender: mpsc::UnboundedSender<StateActorMessage>,
+    broadcast_sender: broadcast::Sender<Message>,
 }
 
 impl StateActorHandle {
     pub fn new(services: BTreeMap<String, Service>) -> Self {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        let mut actor = StateActor::new(receiver, services);
+        let (mpsc_sender, mpsc_receiver) = mpsc::unbounded_channel();
+        let mut actor = StateActor::new(mpsc_receiver, services);
         tokio::spawn(async move { actor.run().await });
 
-        Self { sender }
+        let broadcast_sender = broadcast::Sender::new(32);
+
+        Self {
+            mpsc_sender,
+            broadcast_sender,
+        }
     }
 
     pub async fn create_watcher(
@@ -57,16 +63,26 @@ impl StateActorHandle {
         spec: ServiceSpec,
     ) -> Result<(), StateActorError> {
         let (send, recv) = oneshot::channel();
+        let inner = Message::CreateService(name, spec);
         let msg = StateActorMessage {
-            inner: Message::CreateService(name, spec),
+            inner: inner.clone(),
             respond_to: send,
         };
 
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the
         // same failure twice.
-        let _ = self.sender.send(msg);
-        recv.await.expect("Actor task has been killed")
+        let _ = self.mpsc_sender.send(msg);
+        let resp = recv.await.expect("Actor task has been killed");
+        if resp.is_ok() {
+            // If this fails, there just aren't any subscribers to send messages to.
+            let _ = self.broadcast_sender.send(inner);
+        }
+        return resp;
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<Message> {
+        self.broadcast_sender.subscribe()
     }
 }
 
