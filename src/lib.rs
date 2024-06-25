@@ -85,15 +85,15 @@ pub struct ServiceSpec {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Message {
-    CreateService(String, ServiceSpec),
+pub enum ServiceAction {
+    CreateService(ServiceSpec),
 }
 
-impl Display for Message {
+impl Display for ServiceAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::CreateService(name, spec) => {
-                write!(f, "Create service '{name}' with spec: {spec:?}")
+            Self::CreateService(spec) => {
+                write!(f, "Create service with spec: {spec:?}")
             }
         }
     }

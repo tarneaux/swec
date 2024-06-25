@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display};
-use swec::{Message, Service, ServiceSpec};
+use swec::{Service, ServiceAction, ServiceSpec};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 struct StateActor {
@@ -16,9 +16,9 @@ impl StateActor {
         Self { receiver, services }
     }
 
-    async fn handle_message(&mut self, msg: Message) -> Result<(), StateActorError> {
+    fn handle_message(&mut self, name: String, msg: ServiceAction) -> Result<(), StateActorError> {
         match msg {
-            Message::CreateService(name, spec) => {
+            ServiceAction::CreateService(spec) => {
                 if self.services.contains_key(&name) {
                     return Err(StateActorError::Conflict);
                 }
@@ -32,7 +32,15 @@ impl StateActor {
         while let Some(msg) = self.receiver.recv().await {
             // Errors when sending can happen e.g. if the `select!` macro is used to cancel waiting
             // for the response. We can safely ignore these.
-            let _ = msg.respond_to.send(self.handle_message(msg.inner).await);
+            match msg {
+                StateActorMessage::AlterateService {
+                    respond_to,
+                    name,
+                    action,
+                } => {
+                    let _ = respond_to.send(self.handle_message(name, action));
+                }
+            }
         }
     }
 }
@@ -40,7 +48,7 @@ impl StateActor {
 #[derive(Clone)]
 pub struct StateActorHandle {
     mpsc_sender: mpsc::UnboundedSender<StateActorMessage>,
-    broadcast_sender: broadcast::Sender<Message>,
+    broadcast_sender: broadcast::Sender<(String, ServiceAction)>,
 }
 
 impl StateActorHandle {
@@ -57,15 +65,20 @@ impl StateActorHandle {
         }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<Message> {
+    pub fn subscribe(&self) -> broadcast::Receiver<(String, ServiceAction)> {
         self.broadcast_sender.subscribe()
     }
 
-    async fn query(&self, msg: Message) -> Result<(), StateActorError> {
+    async fn alterate_service(
+        &self,
+        name: String,
+        msg: ServiceAction,
+    ) -> Result<(), StateActorError> {
         let (send, recv) = oneshot::channel();
 
-        let encapsulated_msg = StateActorMessage {
-            inner: msg.clone(),
+        let encapsulated_msg = StateActorMessage::AlterateService {
+            name: name.clone(),
+            action: msg.clone(),
             respond_to: send,
         };
 
@@ -77,10 +90,10 @@ impl StateActorHandle {
 
         if resp.is_ok() {
             // If this fails, there just aren't any subscribers to send messages to.
-            let _ = self.broadcast_sender.send(msg);
+            let _ = self.broadcast_sender.send((name, msg));
         }
 
-        return resp;
+        resp
     }
 
     pub async fn create_watcher(
@@ -88,13 +101,17 @@ impl StateActorHandle {
         name: String,
         spec: ServiceSpec,
     ) -> Result<(), StateActorError> {
-        self.query(Message::CreateService(name, spec)).await
+        self.alterate_service(name, ServiceAction::CreateService(spec))
+            .await
     }
 }
 
-struct StateActorMessage {
-    inner: Message,
-    respond_to: oneshot::Sender<Result<(), StateActorError>>,
+enum StateActorMessage {
+    AlterateService {
+        name: String,
+        action: ServiceAction,
+        respond_to: oneshot::Sender<Result<(), StateActorError>>,
+    },
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
