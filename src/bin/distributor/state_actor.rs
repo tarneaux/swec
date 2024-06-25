@@ -1,30 +1,46 @@
-use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt::Display};
-use swec::{Service, ServiceAction, ServiceSpec};
+use std::collections::BTreeMap;
+use swec::{Service, ServiceAction};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 struct StateActor {
     receiver: mpsc::UnboundedReceiver<StateActorMessage>,
     services: BTreeMap<String, Service>,
+    cap: usize,
 }
 
 impl StateActor {
     fn new(
         receiver: mpsc::UnboundedReceiver<StateActorMessage>,
         services: BTreeMap<String, Service>,
+        cap: usize,
     ) -> Self {
-        Self { receiver, services }
+        Self {
+            receiver,
+            services,
+            cap,
+        }
     }
 
-    fn handle_message(&mut self, name: String, msg: ServiceAction) -> Result<(), StateActorError> {
+    fn handle_message(&mut self, name: String, msg: ServiceAction) -> Result<(), ()> {
         match msg {
             ServiceAction::CreateService(spec) => {
                 if self.services.contains_key(&name) {
-                    return Err(StateActorError::Conflict);
+                    return Err(());
                 }
-                self.services.insert(name, Service::new(spec));
+                self.services.insert(name, Service::new(spec, self.cap));
                 Ok(())
             }
+            ServiceAction::DeleteService => self
+                .services
+                .remove(&name)
+                .map_or_else(|| Err(()), |_| Ok(())),
+            ServiceAction::AddStatus(s) => self.services.get_mut(&name).map_or_else(
+                || Err(()),
+                |service| {
+                    service.statuses.push_front(s);
+                    Ok(())
+                },
+            ),
         }
     }
 
@@ -33,7 +49,7 @@ impl StateActor {
             // Errors when sending can happen e.g. if the `select!` macro is used to cancel waiting
             // for the response. We can safely ignore these.
             match msg {
-                StateActorMessage::AlterateService {
+                StateActorMessage::Write {
                     respond_to,
                     name,
                     action,
@@ -52,9 +68,10 @@ pub struct StateActorHandle {
 }
 
 impl StateActorHandle {
-    pub fn new(services: BTreeMap<String, Service>) -> Self {
+    /// Create a new state instance and return its handle.
+    pub fn new(services: BTreeMap<String, Service>, cap: usize) -> Self {
         let (mpsc_sender, mpsc_receiver) = mpsc::unbounded_channel();
-        let mut actor = StateActor::new(mpsc_receiver, services);
+        let mut actor = StateActor::new(mpsc_receiver, services, cap);
         tokio::spawn(async move { actor.run().await });
 
         let broadcast_sender = broadcast::Sender::new(32);
@@ -69,14 +86,16 @@ impl StateActorHandle {
         self.broadcast_sender.subscribe()
     }
 
-    async fn alterate_service(
-        &self,
-        name: String,
-        msg: ServiceAction,
-    ) -> Result<(), StateActorError> {
+    /// Run the specified `ServiceAction` on the service with the specified name.
+    ///
+    /// # Errors
+    ///
+    /// If there is a name conflict (in the case `CreateService`) or if the specified service
+    /// doesn't exist (other cases).
+    pub async fn write(&self, name: String, msg: ServiceAction) -> Result<(), ()> {
         let (send, recv) = oneshot::channel();
 
-        let encapsulated_msg = StateActorMessage::AlterateService {
+        let encapsulated_msg = StateActorMessage::Write {
             name: name.clone(),
             action: msg.clone(),
             respond_to: send,
@@ -95,34 +114,12 @@ impl StateActorHandle {
 
         resp
     }
-
-    pub async fn create_watcher(
-        &self,
-        name: String,
-        spec: ServiceSpec,
-    ) -> Result<(), StateActorError> {
-        self.alterate_service(name, ServiceAction::CreateService(spec))
-            .await
-    }
 }
 
 enum StateActorMessage {
-    AlterateService {
+    Write {
         name: String,
         action: ServiceAction,
-        respond_to: oneshot::Sender<Result<(), StateActorError>>,
+        respond_to: oneshot::Sender<Result<(), ()>>,
     },
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub enum StateActorError {
-    Conflict,
-}
-
-impl Display for StateActorError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Conflict => write!(f, "Conflict"),
-        }
-    }
 }

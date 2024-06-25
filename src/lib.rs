@@ -10,9 +10,10 @@ pub struct Service {
 }
 
 impl Service {
-    pub fn new(spec: ServiceSpec) -> Self {
+    #[must_use]
+    pub fn new(spec: ServiceSpec, cap: usize) -> Self {
         Self {
-            statuses: VecDeque::new(),
+            statuses: VecDeque::with_capacity(cap),
             spec,
         }
     }
@@ -87,6 +88,8 @@ pub struct ServiceSpec {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServiceAction {
     CreateService(ServiceSpec),
+    DeleteService,
+    AddStatus(TimedStatus),
 }
 
 impl Display for ServiceAction {
@@ -95,6 +98,8 @@ impl Display for ServiceAction {
             Self::CreateService(spec) => {
                 write!(f, "Create service with spec: {spec:?}")
             }
+            Self::DeleteService => write!(f, "Delete service"),
+            Self::AddStatus(s) => write!(f, "Add status: {s}"),
         }
     }
 }
