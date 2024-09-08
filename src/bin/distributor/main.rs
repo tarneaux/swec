@@ -1,19 +1,17 @@
+mod api_util;
 mod state_actor;
+
+use api_util::ApiError;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
     routing::{get, put},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
 use clap::Parser;
-use state_actor::{ServiceNotFoundError, StateActorHandle, WriteError};
-use std::{
-    collections::{BTreeMap, VecDeque},
-    error::Error,
-    fmt::Display,
-};
+use state_actor::StateActorHandle;
+use std::collections::{BTreeMap, VecDeque};
 use swec::{ServiceAction, TimedStatus};
 use tokio::spawn;
 use tokio::sync::broadcast;
@@ -77,47 +75,4 @@ struct Cli {
     /// Listening address for private API
     #[arg(short, long, default_value = "0.0.0.0:8080")]
     address: String,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ApiError {
-    WriteError(WriteError),
-    ServiceNotFoundError,
-}
-
-impl From<WriteError> for ApiError {
-    fn from(value: WriteError) -> Self {
-        Self::WriteError(value)
-    }
-}
-
-impl From<ServiceNotFoundError> for ApiError {
-    fn from(_: ServiceNotFoundError) -> Self {
-        Self::ServiceNotFoundError
-    }
-}
-
-impl Display for ApiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WriteError(e) => e.fmt(f),
-            Self::ServiceNotFoundError => ServiceNotFoundError.fmt(f),
-        }
-    }
-}
-
-impl Error for ApiError {}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        match self {
-            Self::WriteError(WriteError::NameConflict) => {
-                (StatusCode::CONFLICT, WriteError::NameConflict.to_string())
-            }
-            Self::ServiceNotFoundError | Self::WriteError(WriteError::NotFound) => {
-                (StatusCode::NOT_FOUND, ServiceNotFoundError.to_string())
-            }
-        }
-        .into_response()
-    }
 }
