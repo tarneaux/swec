@@ -50,30 +50,30 @@ impl StateActor {
         }
     }
 
-    fn handle_get_spec(&mut self, name: String) -> Result<ServiceSpec, ServiceNotFoundError> {
+    fn handle_get_spec(&mut self, name: &str) -> Result<ServiceSpec, ServiceNotFoundError> {
         self.services
-            .get(&name)
+            .get(name)
             .map(|s| s.spec.clone())
             .ok_or(ServiceNotFoundError)
     }
 
     fn handle_get_statuses(
         &mut self,
-        name: String,
+        name: &str,
     ) -> Result<VecDeque<TimedStatus>, ServiceNotFoundError> {
         self.services
-            .get(&name)
+            .get(name)
             .map(|s| s.statuses.clone())
             .ok_or(ServiceNotFoundError)
     }
 
     fn handle_get_status_at(
         &mut self,
-        name: String,
+        name: &str,
         time: DateTime<Utc>,
     ) -> Result<Option<TimedStatus>, ServiceNotFoundError> {
         self.services
-            .get(&name)
+            .get(name)
             .map(|s| {
                 // TODO: Search through the statuses dichotonomically.
                 // Is a VecDeque the right data structure, since the statuses should be ordered ?
@@ -98,17 +98,17 @@ impl StateActor {
                     let _ = respond_to.send(self.handle_write(name, action));
                 }
                 StateActorMessage::GetStatuses { name, respond_to } => {
-                    let _ = respond_to.send(self.handle_get_statuses(name));
+                    let _ = respond_to.send(self.handle_get_statuses(&name));
                 }
                 StateActorMessage::GetStatusAt {
                     name,
                     time,
                     respond_to,
                 } => {
-                    let _ = respond_to.send(self.handle_get_status_at(name, time));
+                    let _ = respond_to.send(self.handle_get_status_at(&name, time));
                 }
                 StateActorMessage::GetSpec { name, respond_to } => {
-                    let _ = respond_to.send(self.handle_get_spec(name));
+                    let _ = respond_to.send(self.handle_get_spec(&name));
                 }
             };
         }
