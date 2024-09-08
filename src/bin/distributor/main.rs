@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use clap::Parser;
 use state_actor::StateActorHandle;
 use std::collections::{BTreeMap, VecDeque};
-use swec::{ServiceAction, TimedStatus};
+use swec::{ServiceAction, ServiceSpec, TimedStatus};
 use tokio::spawn;
 use tokio::sync::broadcast;
 use tracing::info;
@@ -29,6 +29,7 @@ async fn main() {
         .route("/:name", put(put_action))
         .route("/:name/statuses", get(get_statuses))
         .route("/:name/status", get(get_status_at))
+        .route("/:name/spec", get(get_spec))
         .with_state(state_actor_handle);
 
     let cli = Cli::parse();
@@ -67,6 +68,14 @@ async fn get_status_at(
 ) -> Result<(StatusCode, Json<Option<TimedStatus>>), ApiError> {
     let status = state_actor_handle.get_status_at(name, time).await?;
     Ok((StatusCode::OK, Json(status)))
+}
+
+async fn get_spec(
+    State(state_actor_handle): State<StateActorHandle>,
+    Path(name): Path<String>,
+) -> Result<(StatusCode, Json<ServiceSpec>), ApiError> {
+    let spec = state_actor_handle.get_spec(name).await?;
+    Ok((StatusCode::OK, Json(spec)))
 }
 
 #[derive(Parser)]

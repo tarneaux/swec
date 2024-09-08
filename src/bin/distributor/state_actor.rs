@@ -4,7 +4,7 @@ use std::{
     error::Error,
     fmt::Display,
 };
-use swec::{Service, ServiceAction, TimedStatus};
+use swec::{Service, ServiceAction, ServiceSpec, TimedStatus};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 #[derive(Debug)]
@@ -48,6 +48,13 @@ impl StateActor {
                 },
             ),
         }
+    }
+
+    fn handle_get_spec(&mut self, name: String) -> Result<ServiceSpec, ServiceNotFoundError> {
+        self.services
+            .get(&name)
+            .map(|s| s.spec.clone())
+            .ok_or(ServiceNotFoundError)
     }
 
     fn handle_get_statuses(
@@ -100,7 +107,10 @@ impl StateActor {
                 } => {
                     let _ = respond_to.send(self.handle_get_status_at(name, time));
                 }
-            }
+                StateActorMessage::GetSpec { name, respond_to } => {
+                    let _ = respond_to.send(self.handle_get_spec(name));
+                }
+            };
         }
     }
 }
@@ -192,6 +202,17 @@ impl StateActorHandle {
 
         self.exchange(msg, recv).await
     }
+
+    pub async fn get_spec(&self, name: String) -> Result<ServiceSpec, ServiceNotFoundError> {
+        let (send, recv) = oneshot::channel();
+
+        let msg = StateActorMessage::GetSpec {
+            name,
+            respond_to: send,
+        };
+
+        self.exchange(msg, recv).await
+    }
 }
 
 #[derive(Debug)]
@@ -209,6 +230,10 @@ enum StateActorMessage {
         name: String,
         time: DateTime<Utc>,
         respond_to: oneshot::Sender<Result<Option<TimedStatus>, ServiceNotFoundError>>,
+    },
+    GetSpec {
+        name: String,
+        respond_to: oneshot::Sender<Result<ServiceSpec, ServiceNotFoundError>>,
     },
 }
 
