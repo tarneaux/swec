@@ -140,7 +140,7 @@ impl StateActorHandle {
         self.broadcast_sender.subscribe()
     }
 
-    async fn exchange<R>(&self, msg: StateActorMessage, recv: oneshot::Receiver<R>) -> R {
+    async fn exchange<R: Send>(&self, msg: StateActorMessage, recv: oneshot::Receiver<R>) -> R {
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the
         // same failure twice.
