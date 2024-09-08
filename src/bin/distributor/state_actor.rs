@@ -7,6 +7,7 @@ use std::{
 use swec::{Service, ServiceAction, TimedStatus};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
+#[derive(Debug)]
 struct StateActor {
     receiver: mpsc::UnboundedReceiver<StateActorMessage>,
     services: BTreeMap<String, Service>,
@@ -211,7 +212,7 @@ enum StateActorMessage {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum WriteError {
     NotFound,
     NameConflict,
@@ -228,7 +229,7 @@ impl Display for WriteError {
 
 impl Error for WriteError {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct ServiceNotFoundError;
 
 impl Display for ServiceNotFoundError {
