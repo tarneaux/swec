@@ -2,13 +2,18 @@ mod state_actor;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
+    response::{IntoResponse, Response},
     routing::{get, put},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use state_actor::{ServiceNotFoundError, StateActorHandle, WriteError};
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    error::Error,
+    fmt::Display,
+};
 use swec::{ServiceAction, TimedStatus};
 use tokio::spawn;
 use tokio::sync::broadcast;
@@ -44,37 +49,26 @@ async fn put_action(
     State(state_actor_handle): State<StateActorHandle>,
     Path(name): Path<String>,
     Json(action): Json<ServiceAction>,
-) -> (StatusCode, String) {
-    state_actor_handle.write(name, action).await.map_or_else(
-        |e| match e {
-            WriteError::NameConflict => (StatusCode::CONFLICT, e.to_string()),
-            WriteError::NotFound => (StatusCode::NOT_FOUND, e.to_string()),
-        },
-        |()| (StatusCode::NO_CONTENT, "Action executed".to_string()),
-    )
+) -> Result<(StatusCode, String), ApiError> {
+    state_actor_handle.write(name, action).await?;
+    Ok((StatusCode::NO_CONTENT, "Action executed".to_string()))
 }
 
 async fn get_statuses(
     State(state_actor_handle): State<StateActorHandle>,
     Path(name): Path<String>,
-) -> Result<(StatusCode, Json<VecDeque<TimedStatus>>), (StatusCode, String)> {
-    state_actor_handle
-        .get_statuses(name)
-        .await
-        .map(|v| (StatusCode::OK, Json(v)))
-        .map_err(|ServiceNotFoundError| (StatusCode::NOT_FOUND, "Not found".to_string()))
+) -> Result<(StatusCode, Json<VecDeque<TimedStatus>>), ApiError> {
+    let statuses = state_actor_handle.get_statuses(name).await?;
+    Ok((StatusCode::OK, Json(statuses)))
 }
 
 async fn get_status_at(
     State(state_actor_handle): State<StateActorHandle>,
     Path(name): Path<String>,
     Json(time): Json<DateTime<Utc>>,
-) -> Result<(StatusCode, Json<Option<TimedStatus>>), (StatusCode, String)> {
-    state_actor_handle
-        .get_status_at(name, time)
-        .await
-        .map(|v| (StatusCode::OK, Json(v)))
-        .map_err(|ServiceNotFoundError| (StatusCode::NOT_FOUND, "Not found".to_string()))
+) -> Result<(StatusCode, Json<Option<TimedStatus>>), ApiError> {
+    let status = state_actor_handle.get_status_at(name, time).await?;
+    Ok((StatusCode::OK, Json(status)))
 }
 
 #[derive(Parser)]
@@ -83,4 +77,47 @@ struct Cli {
     /// Listening address for private API
     #[arg(short, long, default_value = "0.0.0.0:8080")]
     address: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ApiError {
+    WriteError(WriteError),
+    ServiceNotFoundError,
+}
+
+impl From<WriteError> for ApiError {
+    fn from(value: WriteError) -> Self {
+        Self::WriteError(value)
+    }
+}
+
+impl From<ServiceNotFoundError> for ApiError {
+    fn from(_: ServiceNotFoundError) -> Self {
+        Self::ServiceNotFoundError
+    }
+}
+
+impl Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WriteError(e) => e.fmt(f),
+            Self::ServiceNotFoundError => ServiceNotFoundError.fmt(f),
+        }
+    }
+}
+
+impl Error for ApiError {}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::WriteError(WriteError::NameConflict) => {
+                (StatusCode::CONFLICT, WriteError::NameConflict.to_string())
+            }
+            Self::ServiceNotFoundError | Self::WriteError(WriteError::NotFound) => {
+                (StatusCode::NOT_FOUND, ServiceNotFoundError.to_string())
+            }
+        }
+        .into_response()
+    }
 }
