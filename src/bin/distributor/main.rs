@@ -2,13 +2,16 @@ mod state_actor;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, post},
+    routing::{get, put},
     Json, Router,
 };
+use chrono::{DateTime, Utc};
 use clap::Parser;
-use state_actor::StateActorHandle;
-use std::collections::BTreeMap;
-use swec::{ServiceAction, ServiceSpec, TimedStatus};
+use state_actor::{ServiceNotFoundError, StateActorHandle, WriteError};
+use std::collections::{BTreeMap, VecDeque};
+use swec::{ServiceAction, TimedStatus};
+use tokio::spawn;
+use tokio::sync::broadcast;
 use tracing::info;
 
 #[tokio::main]
@@ -20,9 +23,9 @@ async fn main() {
     let state_actor_handle = StateActorHandle::new(BTreeMap::new(), 32);
 
     let app = Router::new()
-        .route("/:name/spec", post(post_service_spec))
-        .route("/:name", delete(delete_service))
-        .route("/:name/status", post(post_status))
+        .route("/:name", put(put_action))
+        .route("/:name/statuses", get(get_statuses))
+        .route("/:name/status", get(get_status_at))
         .with_state(state_actor_handle);
 
     let cli = Cli::parse();
@@ -37,45 +40,41 @@ async fn main() {
         .expect("Couldn't start API server");
 }
 
-async fn post_service_spec(
+async fn put_action(
     State(state_actor_handle): State<StateActorHandle>,
     Path(name): Path<String>,
-    Json(spec): Json<ServiceSpec>,
+    Json(action): Json<ServiceAction>,
 ) -> (StatusCode, String) {
-    state_actor_handle
-        .write(name, ServiceAction::CreateService(spec))
-        .await
-        .map_or_else(
-            |()| (StatusCode::CONFLICT, "Conflict".to_string()),
-            |()| (StatusCode::CREATED, "Created".to_string()),
-        )
+    state_actor_handle.write(name, action).await.map_or_else(
+        |e| match e {
+            WriteError::NameConflict => (StatusCode::CONFLICT, e.to_string()),
+            WriteError::NotFound => (StatusCode::NOT_FOUND, e.to_string()),
+        },
+        |()| (StatusCode::NO_CONTENT, "Action executed".to_string()),
+    )
 }
 
-async fn delete_service(
+async fn get_statuses(
     State(state_actor_handle): State<StateActorHandle>,
     Path(name): Path<String>,
-) -> (StatusCode, String) {
+) -> Result<(StatusCode, Json<VecDeque<TimedStatus>>), (StatusCode, String)> {
     state_actor_handle
-        .write(name, ServiceAction::DeleteService)
+        .get_statuses(name)
         .await
-        .map_or_else(
-            |()| (StatusCode::NOT_FOUND, "Not found".to_string()),
-            |()| (StatusCode::NO_CONTENT, "Deleted".to_string()),
-        )
+        .map(|v| (StatusCode::OK, Json(v)))
+        .map_err(|ServiceNotFoundError| (StatusCode::NOT_FOUND, "Not found".to_string()))
 }
 
-async fn post_status(
+async fn get_status_at(
     State(state_actor_handle): State<StateActorHandle>,
     Path(name): Path<String>,
-    Json(status): Json<TimedStatus>,
-) -> (StatusCode, String) {
+    Json(time): Json<DateTime<Utc>>,
+) -> Result<(StatusCode, Json<Option<TimedStatus>>), (StatusCode, String)> {
     state_actor_handle
-        .write(name, ServiceAction::AddStatus(status))
+        .get_status_at(name, time)
         .await
-        .map_or_else(
-            |()| (StatusCode::NOT_FOUND, "Not found".to_string()),
-            |()| (StatusCode::CREATED, "Created".to_string()),
-        )
+        .map(|v| (StatusCode::OK, Json(v)))
+        .map_err(|ServiceNotFoundError| (StatusCode::NOT_FOUND, "Not found".to_string()))
 }
 
 #[derive(Parser)]
